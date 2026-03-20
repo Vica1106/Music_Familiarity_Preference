@@ -1,0 +1,15 @@
+Exploratory analysis started at 2026-03-18T11:20:12.817638
+Focus: Familiarity & Theta (alpha for comparison); methods adapted from enjoyment/alpha pipeline.
+Loaded sub-001 ses-01: 136.0s, 250.0 Hz
+Epochs: 1, tmin=0.0s tmax=120.0s
+TFR: freqs 2-50 Hz, times 0.0-120.0s
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_spectrogram_theta.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_spectrogram_all_avg.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_spectrogram_frontal.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_spectrogram_frontal_avg.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_spectrogram_central.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_spectrogram_parietal.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_all_bands_over_time.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_theta_alpha_over_time.png
+Saved /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_theta_by_region_over_time.png
+Topomap already exists: /Users/vicayu/Desktop/Music_Familiarity_Preference/familarity_thetawave/results/explore_topomap_familiarity_low_vs_high.png (skipping regeneration)

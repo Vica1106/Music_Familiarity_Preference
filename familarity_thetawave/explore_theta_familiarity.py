@@ -274,6 +274,7 @@ def plot_topomap_familiarity_low_vs_high(log_fn=None, n_examples=3):
     """
     if not HAS_MNE:
         return
+    from mne.viz import plot_topomap
     behav = load_behavioural()
     low_examples = behav[behav["Familiarity_Group"] == "Low"].head(n_examples)
     high_examples = behav[behav["Familiarity_Group"] == "High"].head(n_examples)
@@ -284,9 +285,39 @@ def plot_topomap_familiarity_low_vs_high(log_fn=None, n_examples=3):
     if log_fn:
         log_fn(f"Creating topomaps: Low familiarity n={len(low_examples)}, High n={len(high_examples)}")
     n_cols = max(len(low_examples), len(high_examples))
-    fig, axes = plt.subplots(2, n_cols, figsize=(4 * n_cols, 8))
+    fig, axes = plt.subplots(2, n_cols, figsize=(4.8 * n_cols, 8))
     if n_cols == 1:
         axes = np.array([[axes[0]], [axes[1]]])
+
+    # -------------------------------------------------
+    # 1) Compute global vlim across all example trials
+    #    (friend-style: use 5th/95th percentile of relative dB)
+    # -------------------------------------------------
+    all_examples = pd.concat([low_examples, high_examples], ignore_index=True)
+    global_vmin, global_vmax = None, None
+    for _, row in all_examples.iterrows():
+        sub, song_id = int(row["Subject"]), int(row["Song_ID"])
+        info, theta_ch = _theta_channel_power_for_topomap(sub, song_id, log_fn=log_fn)
+        if info is None or theta_ch is None:
+            continue
+        theta_ch = np.asarray(theta_ch, dtype=float)
+        eps = np.finfo(float).eps
+        theta_db = 10 * np.log10(theta_ch + eps)
+        theta_rel = theta_db - np.mean(theta_db)
+        cur_min = float(np.percentile(theta_rel, 5))
+        cur_max = float(np.percentile(theta_rel, 95))
+        global_vmin = cur_min if global_vmin is None else min(global_vmin, cur_min)
+        global_vmax = cur_max if global_vmax is None else max(global_vmax, cur_max)
+
+    if global_vmin is None or global_vmax is None:
+        if log_fn:
+            log_fn("Could not compute global vlim for topomaps. Skip.")
+        plt.close(fig)
+        return
+    vlim = (global_vmin, global_vmax)
+    if log_fn:
+        log_fn(f"Using common vlim={vlim} for all topomaps")
+
     # Row 0: Low familiarity
     for idx, (_, row) in enumerate(low_examples.iterrows()):
         sub, song_id = int(row["Subject"]), int(row["Song_ID"])
@@ -294,25 +325,21 @@ def plot_topomap_familiarity_low_vs_high(log_fn=None, n_examples=3):
         if info is None or theta_ch is None:
             axes[0, idx].set_visible(False)
             continue
-        # Friend-style: dB + relative to scalp mean
         theta_ch = np.asarray(theta_ch, dtype=float)
         eps = np.finfo(float).eps
         theta_db = 10 * np.log10(theta_ch + eps)
         theta_rel = theta_db - np.mean(theta_db)
-        vmax = float(np.max(np.abs(theta_rel)))
-        vlim = (-vmax, vmax) if vmax > 0 else (-1, 1)
-        evoked_data = theta_rel[:, np.newaxis]
-        evoked = EvokedArray(evoked_data, info, tmin=0)
-        evoked.plot_topomap(
-            times=[0],
-            ch_type="eeg",
-            show=False,
+        im, _ = plot_topomap(
+            theta_rel,
+            info,
             axes=axes[0, idx],
-            colorbar=False,
+            show=False,
             cmap="RdBu_r",
             vlim=vlim,
+            contours=6,
             extrapolate="head",
         )
+        fig.colorbar(im, ax=axes[0, idx], fraction=0.046, pad=0.04)
         axes[0, idx].set_title(f"Low familiarity\nSubj{sub}, Song{song_id}", fontsize=12, fontweight="bold")
     # Row 1: High familiarity
     for idx, (_, row) in enumerate(high_examples.iterrows()):
@@ -325,27 +352,24 @@ def plot_topomap_familiarity_low_vs_high(log_fn=None, n_examples=3):
         eps = np.finfo(float).eps
         theta_db = 10 * np.log10(theta_ch + eps)
         theta_rel = theta_db - np.mean(theta_db)
-        vmax = float(np.max(np.abs(theta_rel)))
-        vlim = (-vmax, vmax) if vmax > 0 else (-1, 1)
-        evoked_data = theta_rel[:, np.newaxis]
-        evoked = EvokedArray(evoked_data, info, tmin=0)
-        evoked.plot_topomap(
-            times=[0],
-            ch_type="eeg",
-            show=False,
+        im, _ = plot_topomap(
+            theta_rel,
+            info,
             axes=axes[1, idx],
-            colorbar=False,
+            show=False,
             cmap="RdBu_r",
             vlim=vlim,
+            contours=6,
             extrapolate="head",
         )
+        fig.colorbar(im, ax=axes[1, idx], fraction=0.046, pad=0.04)
         axes[1, idx].set_title(f"High familiarity\nSubj{sub}, Song{song_id}", fontsize=12, fontweight="bold")
     # Hide unused subplots
     for idx in range(len(low_examples), n_cols):
         axes[0, idx].set_visible(False)
     for idx in range(len(high_examples), n_cols):
         axes[1, idx].set_visible(False)
-    plt.suptitle("Theta Power Topography: Low vs High Familiarity (example trials)", fontsize=14, fontweight="bold", y=1.02)
+    plt.suptitle("Theta Power Topography: Low vs High Familiarity (example trials)", fontsize=16, fontweight="bold", y=1.02)
     plt.tight_layout()
     out_path = OUT_DIR / "explore_topomap_familiarity_low_vs_high.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -399,13 +423,22 @@ def run_explore(max_runs=5, subject_id=1, song_id=1, make_all_plots=True):
     if not frontal_chs:
         frontal_chs = [power_tfr.ch_names[len(power_tfr.ch_names) // 2]]
 
-    # —— Graph 1: Time–frequency spectrogram (one channel, similar to friend's) ——
+    # —— Graph 1: Time–frequency spectrogram (better channel selection) ——
     if make_all_plots:
-        ch_idx = power_tfr.ch_names.index(frontal_chs[0]) if frontal_chs else 0
-        ch_name = power_tfr.ch_names[ch_idx]
+        # Better channel selection: use middle frontal or central representative
+        if frontal_chs and len(frontal_chs) > 3:
+            # Use middle frontal channel instead of first (E4)
+            mid_frontal = frontal_chs[len(frontal_chs) // 2]
+            ch_idx = power_tfr.ch_names.index(mid_frontal)
+            ch_name = f"{mid_frontal} (mid-frontal)"
+        else:
+            # Fallback: use central representative channel
+            ch_idx = len(power_tfr.ch_names) // 2
+            ch_name = f"{power_tfr.ch_names[ch_idx]} (central)"
+        
         fig_list = power_tfr.plot(
             [ch_idx], baseline=(None, 0), mode="logratio",
-            title=f"Time–Frequency (theta 4–8 Hz) – {ch_name}",
+            title=f"Time–Frequency Spectrogram – {ch_name}",
             show=False,
         )
         fig = fig_list[0] if isinstance(fig_list, list) else fig_list
@@ -413,8 +446,79 @@ def run_explore(max_runs=5, subject_id=1, song_id=1, make_all_plots=True):
         fig.savefig(OUT_DIR / "explore_spectrogram_theta.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
         log(f"Saved {OUT_DIR / 'explore_spectrogram_theta.png'}")
+        
+        # —— Graph 1b/1c: Average spectrograms (all channels + by region) ——
+        def save_avg_spectrogram(ch_list, out_name, title):
+            if ch_list is None:
+                indices = list(range(len(power_tfr.ch_names)))
+            else:
+                indices = [power_tfr.ch_names.index(ch) for ch in ch_list if ch in power_tfr.ch_names]
+            if len(indices) == 0:
+                return
+            avg_data = np.mean(power_tfr.data[indices, :, :], axis=0)  # (freqs, times)
+            # Keep only <= 40 Hz for clearer interpretation (avoid 40–50 Hz dominance/noise band)
+            freq_mask = power_tfr.freqs <= 40.0
+            if np.sum(freq_mask) == 0:
+                return
+            avg_data = avg_data[freq_mask, :]
+            freqs_plot = power_tfr.freqs[freq_mask]
+            eps = np.finfo(float).eps
+            avg_db = 10 * np.log10(avg_data + eps)
+            vmin = float(np.percentile(avg_db, 5))
+            vmax = float(np.percentile(avg_db, 95))
+            fig, ax = plt.subplots(figsize=(12, 5))
+            im = ax.imshow(
+                avg_db,
+                aspect="auto",
+                origin="lower",
+                extent=[power_tfr.times[0], power_tfr.times[-1], freqs_plot[0], freqs_plot[-1]],
+                cmap="RdBu_r",
+                vmin=vmin,
+                vmax=vmax,
+            )
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Frequency (Hz)")
+            ax.set_title(title, fontsize=13, fontweight="bold")
+            plt.colorbar(im, ax=ax, label="Power (dB)")
+            fig.tight_layout()
+            out_path = OUT_DIR / out_name
+            fig.savefig(out_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            log(f"Saved {out_path}")
 
-    # —— Graph 2a: All frequency bands over time (same as friend's "Frequency Band Power Over Time") ——
+        # Option 1: all-channel average spectrogram
+        save_avg_spectrogram(
+            None,
+            "explore_spectrogram_all_avg.png",
+            f"Time–Frequency Spectrogram – All Channels Average ({len(power_tfr.ch_names)} channels)",
+        )
+        # Option 2: regional average spectrograms
+        if frontal_chs:
+            save_avg_spectrogram(
+                frontal_chs,
+                "explore_spectrogram_frontal.png",
+                f"Time–Frequency Spectrogram – Frontal Average ({len(frontal_chs)} channels)",
+            )
+            # Backward-compatible filename used earlier
+            save_avg_spectrogram(
+                frontal_chs,
+                "explore_spectrogram_frontal_avg.png",
+                f"Time–Frequency Spectrogram – Frontal Average ({len(frontal_chs)} channels)",
+            )
+        if central_chs:
+            save_avg_spectrogram(
+                central_chs,
+                "explore_spectrogram_central.png",
+                f"Time–Frequency Spectrogram – Central Average ({len(central_chs)} channels)",
+            )
+        if parietal_chs:
+            save_avg_spectrogram(
+                parietal_chs,
+                "explore_spectrogram_parietal.png",
+                f"Time–Frequency Spectrogram – Parietal Average ({len(parietal_chs)} channels)",
+            )
+
+    # —— Graph 2a: All frequency bands over time (averaged across all channels) ——
     if make_all_plots:
         band_colors = {
             "delta": "purple",
@@ -423,12 +527,11 @@ def run_explore(max_runs=5, subject_id=1, song_id=1, make_all_plots=True):
             "beta": "orange",
             "gamma": "red",
         }
-        ch_idx = power_tfr.ch_names.index(frontal_chs[0]) if frontal_chs else 0
-        ch_name = power_tfr.ch_names[ch_idx]
+        region_name = f"All Channels Average ({len(power_tfr.ch_names)} chs)"
         fig, ax = plt.subplots(figsize=(14, 6))
         for band_name in FREQ_BANDS.keys():
-            power_2d = extract_band_power(power_tfr, band_name, channels=frontal_chs)
-            trace = np.mean(power_2d, axis=0)
+            power_2d = extract_band_power(power_tfr, band_name)
+            trace = np.mean(power_2d, axis=0)  # Average across channels
             fmin, fmax = FREQ_BANDS[band_name]
             ax.plot(
                 power_tfr.times, trace,
@@ -438,7 +541,7 @@ def run_explore(max_runs=5, subject_id=1, song_id=1, make_all_plots=True):
             )
         ax.set_xlabel("Time (seconds)", fontsize=12)
         ax.set_ylabel("Power (dB)", fontsize=12)
-        ax.set_title(f"Frequency Band Power Over Time – {ch_name}", fontsize=14, fontweight="bold")
+        ax.set_title(f"Frequency Band Power Over Time – {region_name}", fontsize=14, fontweight="bold")
         ax.legend(loc="best", fontsize=10)
         ax.grid(alpha=0.3)
         fig.tight_layout()
@@ -529,8 +632,12 @@ def run_explore(max_runs=5, subject_id=1, song_id=1, make_all_plots=True):
                 log(f"Saved {OUT_DIR / 'explore_theta_vs_familiarity_group.png'} (n={len(df)})")
 
     # —— Graph 7–style: Topomaps comparing Low vs High familiarity (example trials) ——
-    if make_all_plots:
+    topomap_path = OUT_DIR / "explore_topomap_familiarity_low_vs_high.png"
+    if make_all_plots and not topomap_path.exists():
+        log("Generating topomaps (Low vs High familiarity examples)...")
         plot_topomap_familiarity_low_vs_high(log_fn=log, n_examples=3)
+    elif make_all_plots and topomap_path.exists():
+        log(f"Topomap already exists: {topomap_path} (skipping regeneration)")
 
     # Save log
     log_path = OUT_DIR / f"explore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"

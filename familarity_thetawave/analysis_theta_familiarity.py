@@ -312,13 +312,28 @@ def run_statistics(df):
 def plot_boxplot_main(df, out_path=OUT_FIG):
     """Main report figure: Boxplot Theta Power (frontal) vs Familiarity Group."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    eps = np.finfo(float).eps
+    rng = np.random.default_rng(42)
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     low = df.loc[df["Familiarity_Group"] == "Low", "theta_frontal"].dropna()
     high = df.loc[df["Familiarity_Group"] == "High", "theta_frontal"].dropna()
-    ax.boxplot([low, high], tick_labels=["Low", "High"], patch_artist=True)
+    low_db = 10 * np.log10(np.asarray(low, dtype=float) + eps)
+    high_db = 10 * np.log10(np.asarray(high, dtype=float) + eps)
+    ax.boxplot(
+        [low_db, high_db],
+        tick_labels=["Low", "High"],
+        patch_artist=True,
+        showfliers=False,
+    )
+    # Overlay all points with small jitter so dense values remain visible
+    if len(low_db):
+        ax.scatter(1 + rng.uniform(-0.06, 0.06, size=len(low_db)), low_db, s=18, alpha=0.5, color="black")
+    if len(high_db):
+        ax.scatter(2 + rng.uniform(-0.06, 0.06, size=len(high_db)), high_db, s=18, alpha=0.5, color="black")
     ax.set_xlabel("Familiarity Group")
-    ax.set_ylabel("Theta power (4–8 Hz, frontal)")
+    ax.set_ylabel("Theta power (dB, 4-8 Hz, frontal)")
     ax.set_title("Theta Power vs Familiarity Group")
+    ax.grid(alpha=0.25, axis="y")
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
@@ -328,14 +343,28 @@ def plot_boxplot_main(df, out_path=OUT_FIG):
 def plot_boxplot_by_region(df, out_path=OUT_FIG_REGIONS):
     """Three panels: theta_frontal, theta_central, theta_parietal vs Familiarity Group."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    eps = np.finfo(float).eps
+    rng = np.random.default_rng(42)
     fig, axes = plt.subplots(1, 3, figsize=(10, 4))
     for ax, col in zip(axes, ["theta_frontal", "theta_central", "theta_parietal"]):
         low = df.loc[df["Familiarity_Group"] == "Low", col].dropna()
         high = df.loc[df["Familiarity_Group"] == "High", col].dropna()
-        ax.boxplot([low, high], tick_labels=["Low", "High"], patch_artist=True)
+        low_db = 10 * np.log10(np.asarray(low, dtype=float) + eps)
+        high_db = 10 * np.log10(np.asarray(high, dtype=float) + eps)
+        ax.boxplot(
+            [low_db, high_db],
+            tick_labels=["Low", "High"],
+            patch_artist=True,
+            showfliers=False,
+        )
+        if len(low_db):
+            ax.scatter(1 + rng.uniform(-0.06, 0.06, size=len(low_db)), low_db, s=14, alpha=0.45, color="black")
+        if len(high_db):
+            ax.scatter(2 + rng.uniform(-0.06, 0.06, size=len(high_db)), high_db, s=14, alpha=0.45, color="black")
         ax.set_xlabel("Familiarity Group")
-        ax.set_ylabel("Theta power (4–8 Hz)")
+        ax.set_ylabel("Theta power (dB, 4-8 Hz)")
         ax.set_title(col.replace("theta_", "").capitalize())
+        ax.grid(alpha=0.25, axis="y")
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
@@ -358,19 +387,20 @@ def plot_theta_topomap(info, data_1d, title, out_path, ch_names=None):
     rel = data_db - np.mean(data_db)
     vmax = float(np.max(np.abs(rel))) or 1.0
     vlim = (-vmax, vmax)
-    fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+    fig, ax = plt.subplots(1, 1, figsize=(6, 5))
     try:
-        plot_topomap(
+        im, _ = plot_topomap(
             rel,
             info,
             axes=ax,
             show=False,
-            contours=0,
-            extrapolate="head",
             cmap="RdBu_r",
             vlim=vlim,
+            contours=6,
+            extrapolate="head",
         )
-        ax.set_title(title)
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(title, fontsize=13, fontweight="bold")
         plt.tight_layout()
         plt.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -423,7 +453,7 @@ def build_and_plot_theta_topomap(behav, df_with_groups):
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     try:
-        # Friend-style dB + relative scaling for each map
+        # Friend-style dB + relative scaling and shared vlim for both maps
         eps = np.finfo(float).eps
         low_db = 10 * np.log10(low_theta + eps)
         low_rel = low_db - np.mean(low_db)
@@ -431,29 +461,32 @@ def build_and_plot_theta_topomap(behav, df_with_groups):
         high_rel = high_db - np.mean(high_db)
         vmax = float(np.max(np.abs(np.concatenate([low_rel, high_rel])))) or 1.0
         vlim = (-vmax, vmax)
-        plot_topomap(
+        im_low, _ = plot_topomap(
             low_rel,
             ref_info,
             axes=axes[0],
             show=False,
-            contours=0,
-            extrapolate="head",
             cmap="RdBu_r",
             vlim=vlim,
+            contours=6,
+            extrapolate="head",
         )
-        axes[0].set_title("Theta – Low familiarity")
-        plot_topomap(
+        im_high, _ = plot_topomap(
             high_rel,
             ref_info,
             axes=axes[1],
             show=False,
-            contours=0,
-            extrapolate="head",
             cmap="RdBu_r",
             vlim=vlim,
+            contours=6,
+            extrapolate="head",
         )
-        axes[1].set_title("Theta – High familiarity")
-        plt.tight_layout()
+        axes[0].set_title("Theta – Low familiarity", fontsize=12, fontweight="bold")
+        axes[1].set_title("Theta – High familiarity", fontsize=12, fontweight="bold")
+        # Make the two maps closer and pin the colorbar at the far right
+        plt.subplots_adjust(left=0.05, right=0.88, wspace=0.05)
+        cbar_ax = fig.add_axes([0.9, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
+        fig.colorbar(im_low, cax=cbar_ax)
         plt.savefig(OUT_FIG_TOPO_GROUP, dpi=150, bbox_inches="tight")
         plt.close(fig)
         logger.info("Saved %s", OUT_FIG_TOPO_GROUP)
